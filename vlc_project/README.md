@@ -96,12 +96,15 @@ pip install opencv-python==4.8.0.76 numpy==1.26.0 tqdm -i https://pypi.tuna.tsin
 <img width="976" height="223" alt="image" src="https://github.com/user-attachments/assets/62e33ea9-7172-4254-9f9a-1553dfcba3f2" />
 
 
+用手机usb传到电脑，避免网上传掉帧，然后放到data自动生成的capatured_video
+
 
 
 运行run_receiver.py
 
 
 最后查看结果是否一致即可
+
 
 
 
