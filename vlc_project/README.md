@@ -38,6 +38,7 @@ python -m venv venv
 
 py -3.12 -m venv venv
 
+##根目录创建一个名为data的文件夹
 
 然后打开终端输入下面一行命令
 
@@ -104,6 +105,7 @@ pip install opencv-python==4.8.0.76 numpy==1.26.0 tqdm -i https://pypi.tuna.tsin
 
 
 最后查看结果是否一致即可
+
 
 
 
