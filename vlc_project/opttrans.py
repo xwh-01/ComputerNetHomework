@@ -4,8 +4,10 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from encoder_pillow import OptTransEncoderPillow
-from decoder_pillow import OptTransDecoderPillow
+from src.encoder_pillow import OptTransEncoderPillow
+from src.decoder_pillow import OptTransDecoderPillow
+# 👇 新增：导入独立的 decode_to_file 函数
+from src.decoder_pillow import decode_to_file
 
 def main():
     parser = argparse.ArgumentParser(description='OptTrans: Binary file to image encoder/decoder')
@@ -35,12 +37,13 @@ def main():
         print(f"  Module size: 6px")
         print(f"  Output size: 996x996px")
     elif args.command == 'decode':
-        decoder = OptTransDecoderPillow(
-            module_size=args.module_size, 
-            rs_ecc_symbols=args.ecc,
-            matrix_size=args.matrix_size
-        )
-        success = decoder.decode_to_file(args.input_image, args.output_file)
+        # 👇 注释/删除原有错误调用（2行）
+        # decoder = OptTransDecoderPillow(module_size=args.module_size, rs_ecc_symbols=args.ecc, matrix_size=args.matrix_size)
+        # success = decoder.decode_to_file(args.input_image, args.output_file)
+        
+        # 👇 新增：调用独立函数，赋值给 success
+        success = decode_to_file(args.input_image, args.output_file) is not None
+        
         if success:
             print(f"Decoded {args.input_image} to {args.output_file}")
         else:
