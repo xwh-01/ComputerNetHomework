@@ -49,50 +49,33 @@ class OptTransDecoderPillow:
             else:
                 raise TypeError("不支持的输入类型")
 
-            np_img_raw = np.array(img)
-            img_cv_for_warp = (np_img_raw > 0).astype(np.uint8) * 255
-            warped_matrix = self._perspective_warp(img_cv_for_warp)
-
-            matrix = None
-            use_warped = False
-
-            if warped_matrix is not None:
-                print("✅ 检测到定位点，已应用动态透视矫正！")
-                matrix = 1 - warped_matrix
-                matrix = matrix[self.margin:self.margin+self.matrix_size,
-                                self.margin:self.margin+self.matrix_size]
-                use_warped = True
-                print("  已裁剪边距，获得 166x166 数据矩阵")
+            # 优先使用传统尺寸匹配模式，而不是透视矫正
+            w, h = img.size
+            if w == 1044:
+                current_margin = 4
+                target_w = 174
+            elif w == 996:
+                current_margin = 0
+                target_w = 166
             else:
-                print("⚠️ 未检测到定位点，回退到传统尺寸匹配模式...")
-                w, h = img.size
-                if w == 1044:
-                    current_margin = 4
-                    target_w = 174
-                elif w == 996:
-                    current_margin = 0
-                    target_w = 166
-                else:
-                    print(f"⚠️ 未知尺寸 {w}x{h}，尝试按 174 模块处理")
-                    img = img.resize((174, 174), resample=Image.NEAREST)
-                    current_margin = 4
-                    target_w = 174
-                    w, h = 174, 174
+                img = img.resize((174, 174), resample=Image.NEAREST)
+                current_margin = 4
+                target_w = 174
+                w, h = 174, 174
 
-                if w != target_w:
-                    img = img.resize((target_w, target_w), resample=Image.NEAREST)
-                    w, h = target_w, target_w
+            if w != target_w:
+                img = img.resize((target_w, target_w), resample=Image.NEAREST)
+                w, h = target_w, target_w
 
-                np_img = np.array(img)
-                matrix = 1 - (np_img > 0).astype(int)
+            np_img = np.array(img)
+            matrix = 1 - (np_img > 0).astype(int)
 
-                if current_margin > 0:
-                    m = current_margin
-                    if matrix.shape[0] >= m+166 and matrix.shape[1] >= m+166:
-                        matrix = matrix[m:m+166, m:m+166]
-                    else:
-                        print("⚠️ 裁剪越界，使用全图")
+            if current_margin > 0:
+                m = current_margin
+                if matrix.shape[0] >= m+166 and matrix.shape[1] >= m+166:
+                    matrix = matrix[m:m+166, m:m+166]
 
+            # 解析控制区
             ctrl_info = self._parse_control_robust(matrix)
             best_mask = None
             data_len = None
@@ -100,49 +83,45 @@ class OptTransDecoderPillow:
             if ctrl_info:
                 best_mask = ctrl_info['mask_pattern']
                 data_len = ctrl_info['data_len']
-                print(f"🔑 控制区解析成功：掩码={best_mask}, 长度={data_len}")
             else:
-                print("⚠️ 控制区解析失败，启动智能盲测...")
                 best_mask, data_len = self._blind_test_mask(matrix)
 
-                if best_mask is None and use_warped:
-                    print("🔄 透视模式（已裁剪）失败，尝试使用原始 warped 矩阵（含边距）并重新裁剪为 166x166...")
-                    matrix_retry = 1 - warped_matrix
-                    matrix_retry = matrix_retry[self.margin:self.margin+self.matrix_size,
-                                                self.margin:self.margin+self.matrix_size]
-                    best_mask, data_len = self._blind_test_mask(matrix_retry)
-                    if best_mask is not None:
-                        matrix = matrix_retry
-                        print(f"💡 重试成功，掩码={best_mask}, 长度={data_len}")
-
                 if best_mask is None:
-                    print("❌ 盲测也失败，尝试强制解码所有掩码并检查头部...")
                     best_mask = self._try_all_masks_find_best(matrix)
                     if best_mask is not None:
                         data_len = 2580
-                        print(f"🔨 强制使用掩码 {best_mask}，长度暂用默认值 {data_len}")
                     else:
-                        print("❌ 所有掩码均无效，解码失败。")
-                        return None
+                        # 尝试所有可能的掩码，不依赖头部检测
+                        for test_mask in range(8):
+                            try:
+                                unmasked = self._remove_mask(matrix, test_mask)
+                                data_bits = self._snake_extract(unmasked)
+                                data_bytes_list = self._bits_to_bytes(data_bits)
+                                raw_data = bytes(data_bytes_list)
+                                corrected_data = self._apply_reed_solomon(raw_data, 2580)
+                                if corrected_data:
+                                    best_mask = test_mask
+                                    data_len = 2580
+                                    break
+                            except:
+                                continue
+                        
+                        if best_mask is None:
+                            return None
 
-            print(f"🎭 应用掩码模式：{best_mask}")
             unmasked_matrix = self._remove_mask(matrix, best_mask)
             data_bits = self._snake_extract(unmasked_matrix)
             data_bytes_list = self._bits_to_bytes(data_bits)
             raw_data = bytes(data_bytes_list)
-            print(f"📦 原始提取数据长度：{len(raw_data)} 字节")
 
             corrected_data = self._apply_reed_solomon(raw_data, data_len)
 
             if corrected_data:
-                print(f"✅ 纠错后数据长度：{len(corrected_data)} 字节")
                 return corrected_data
             else:
-                print("⚠️ 纠错失败，返回原始数据（可能有损坏）")
                 return raw_data[:data_len] if data_len else raw_data
 
         except Exception as e:
-            print(f"❌ 解码过程发生异常：{e}")
             import traceback
             traceback.print_exc()
             return None
@@ -334,6 +313,8 @@ class OptTransDecoderPillow:
     def _snake_extract(self, matrix: np.ndarray) -> List[int]:
         bits = []
         h, w = matrix.shape
+        # 总共需要提取 3060 字节 × 8 位 = 24480 位数据
+        max_bits = 3060 * 8
         for row in range(h - 1, -1, -1):
             if row % 2 == 0:
                 cols = range(w - 1, -1, -1)
@@ -342,6 +323,10 @@ class OptTransDecoderPillow:
             for col in cols:
                 if not (self._is_finder_module(row, col, w) or self._is_control_module(row, col)):
                     bits.append(matrix[row, col])
+                    if len(bits) >= max_bits:
+                        break
+            if len(bits) >= max_bits:
+                break
         return bits
 
     def _is_finder_module(self, i, j, w):
@@ -385,7 +370,6 @@ class OptTransDecoderPillow:
                     decoded_block = decoded_result
                 corrected_blocks.append(decoded_block)
             except Exception as e:
-                print(f"⚠️ 第 {i} 块 RS 纠错失败：{e}，直接取数据部分")
                 corrected_blocks.append(block[:self.data_per_block])
 
         result = b''.join(corrected_blocks)
@@ -413,6 +397,118 @@ def decode_to_file(image_path: str, output_path: Optional[str] = None) -> Option
     with open(output_path, 'wb') as f:
         f.write(data)
     print(f"💾 文件已保存至：{output_path}")
+    return output_path
+
+def calculate_accuracy(original_path: str, decoded_path: str) -> float:
+    """计算解码文件与原始文件的正确率"""
+    try:
+        with open(original_path, 'rb') as f1, open(decoded_path, 'rb') as f2:
+            original_data = f1.read()
+            decoded_data = f2.read()
+        
+        min_len = min(len(original_data), len(decoded_data))
+        correct_bytes = sum(1 for a, b in zip(original_data[:min_len], decoded_data[:min_len]) if a == b)
+        accuracy = (correct_bytes / len(original_data)) * 100 if original_data else 0.0
+        return accuracy
+    except Exception as e:
+        print(f"⚠️ 计算正确率时出错：{e}")
+        return 0.0
+
+def decode_video_to_file(video_path: str, output_path: Optional[str] = None, original_path: Optional[str] = None) -> Optional[str]:
+    decoder = OptTransDecoderPillow()
+    
+    # 打开视频文件
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print("❌ 无法打开视频文件")
+        return None
+    
+    frames_data = []
+    frame_count = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        print(f"🔍 处理视频帧 {frame_count + 1}")
+        
+        # 增强视频帧的预处理
+        frame = cv2.resize(frame, (1044, 1044), interpolation=cv2.INTER_NEAREST)
+        
+        # 尝试多次解码，提高成功率
+        max_attempts = 3
+        success = False
+        
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                print(f"  尝试第 {attempt + 1} 次解码...")
+            
+            # 尝试不同的预处理方法
+            if attempt == 1:
+                # 增加对比度
+                frame = cv2.convertScaleAbs(frame, alpha=1.5, beta=0)
+            elif attempt == 2:
+                # 应用高斯模糊减少噪声
+                frame = cv2.GaussianBlur(frame, (3, 3), 0)
+            
+            data = decoder.decode_image(frame)
+            if data:
+                frames_data.append(data)
+                print(f"✅ 帧 {frame_count + 1} 解码成功，数据长度：{len(data)} 字节")
+                success = True
+                break
+        
+        if not success:
+            print(f"❌ 帧 {frame_count + 1} 解码失败")
+        
+        frame_count += 1
+    
+    cap.release()
+    
+    if not frames_data:
+        print("❌ 视频中未解码到任何数据")
+        return None
+    
+    # 合并所有帧的数据
+    combined_data = b''.join(frames_data)
+    print(f"📦 合并后数据总长度：{len(combined_data)} 字节")
+    
+    # 检查原始文件长度并截断多余数据
+    if original_path and os.path.exists(original_path):
+        with open(original_path, 'rb') as f:
+            original_data = f.read()
+        print(f"📦 原始文件长度：{len(original_data)} 字节")
+        # 截断多余数据
+        if len(combined_data) > len(original_data):
+            combined_data = combined_data[:len(original_data)]
+            print(f"📦 截断后数据长度：{len(combined_data)} 字节")
+    
+    if output_path is None:
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        ext = detect_file_extension(combined_data)
+        output_path = f"restored_{base_name}{ext}"
+    
+    with open(output_path, 'wb') as f:
+        f.write(combined_data)
+    
+    print(f"💾 文件已保存至：{output_path}")
+    print(f"📊 处理了 {frame_count} 帧，成功解码 {len(frames_data)} 帧")
+    
+    # 计算并输出正确率
+    if original_path and os.path.exists(original_path):
+        accuracy = calculate_accuracy(original_path, output_path)
+        print(f"🎯 解码正确率：{accuracy:.2f}%")
+        
+        # 输出详细的错误信息
+        with open(original_path, 'rb') as f1, open(output_path, 'rb') as f2:
+            original_data = f1.read()
+            decoded_data = f2.read()
+        
+        min_len = min(len(original_data), len(decoded_data))
+        error_count = sum(1 for a, b in zip(original_data[:min_len], decoded_data[:min_len]) if a != b)
+        print(f"📊 错误字节数：{error_count}，总字节数：{len(original_data)}")
+    
     return output_path
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 from PIL import Image
 from reedsolo import RSCodec
 import struct
+import cv2
+import numpy as np
 
 class OptTransEncoderPillow:
     def __init__(self, version=1):
@@ -432,3 +434,54 @@ class OptTransEncoderPillow:
                 frame_output = f"{output_image.rsplit('.', 1)[0]}_frame{i}.{output_image.rsplit('.', 1)[1]}"
                 self.encode_data(frame_data, frame_output, frame_num=i, total_frames=total_frames)
             return total_frames
+    
+    def encode_file_to_video(self, input_file, output_video, fps=1):
+        with open(input_file, 'rb') as f:
+            data = f.read()
+        
+        # 分帧处理
+        total_frames = (len(data) + self.data_per_frame - 1) // self.data_per_frame
+        frames = []
+        
+        # 编码每一帧
+        for i in range(total_frames):
+            start = i * self.data_per_frame
+            end = min((i + 1) * self.data_per_frame, len(data))
+            frame_data = data[start:end]
+            
+            # 创建临时图像
+            temp_image = f"temp_frame_{i}.png"
+            img = self.encode_data(frame_data, temp_image, frame_num=i, total_frames=total_frames)
+            
+            # 将图像转换为OpenCV格式
+            img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            frames.append(img_cv)
+        
+        # 检查是否有帧
+        if not frames:
+            return 0
+        
+        # 获取帧大小
+        height, width, _ = frames[0].shape
+        
+        # 创建视频写入器，使用高质量编码
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video, fourcc, fps, (width, height), isColor=True)
+        # 设置视频编码质量
+        out.set(cv2.VIDEOWRITER_PROP_QUALITY, 100)
+        
+        # 写入所有帧
+        for frame in frames:
+            out.write(frame)
+        
+        # 释放资源
+        out.release()
+        
+        # 清理临时文件
+        import os
+        for i in range(total_frames):
+            temp_image = f"temp_frame_{i}.png"
+            if os.path.exists(temp_image):
+                os.remove(temp_image)
+        
+        return total_frames
