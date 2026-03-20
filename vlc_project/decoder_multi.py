@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-多帧解码器 - 支持帧序号验证和智能拼接
+多帧解码器 - 支持帧序号验证&智能拼接
 """
 
 import os
