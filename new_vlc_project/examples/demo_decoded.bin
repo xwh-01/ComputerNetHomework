@@ -1,0 +1,294 @@
+春江花月夜
+[唐] 张若虚
+春江潮水连海平，海上明月共潮生。
+滟滟随波千万里，何处春江无月明！
+江流宛转绕芳甸，月照花林皆似霰；
+空里流霜不觉飞，汀上白沙看不见。
+江天一色无纤尘，皎皎空中孤月轮。
+江畔何人初见月？江月何年初照人？
+人生代代无穷已，江月年年望相似。
+不知江月待何人，但见长江送流水。
+白云一片去悠悠，青枫浦上不胜愁。
+谁家今夜扁舟子？何处相思明月楼？
+可怜楼上月徘徊，应照离人妆镜台。
+玉户帘中卷不去，捣衣砧上拂还来。
+此时相望不相闻，愿逐月华流照君。
+鸿雁长飞光不度，鱼龙潜跃水成文。
+昨夜闲潭梦落花，可怜春半不还家。
+江水流春去欲尽，江潭落月复西斜。
+斜月沉沉藏海雾，碣石潇湘无限路。
+不知乘月几人归，落月摇情满江树。
+# OptTrans 使用指南
+
+## 项目简介
+
+OptTrans 会把二进制数据编码成一张或多张码图，也可以进一步封装成视频来传输。当前项目已经升级到 `V2` 编码规则，重点优化了定位稳定性和拍照解码表现。
+
+当前版本的几个关键点：
+
+- 只保证解码 `V2` 新版码图
+- 单帧有效载荷为 `1384` 字节
+- 图片解码支持直接识别、透视矫正和候选定位点兜底
+- 视频模式支持 `START / END` 标记帧，并在解码时打印接收进度
+
+## 环境要求
+
+- Python 3.12 或更高版本
+- 建议使用虚拟环境
+
+安装依赖：
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+如果你使用的是 Windows + `py` 启动器，也可以这样运行：
+
+```powershell
+py -3.12 -m pip install -r requirements.txt
+```
+
+## 依赖说明
+
+项目当前依赖如下：
+
+- `Pillow`：生成和读取码图
+- `reedsolo`：Reed-Solomon 纠错
+- `numpy`：图像矩阵处理
+- `opencv-python`：透视变换、视频编解码、标记帧检测
+
+## 项目结构
+
+```text
+.
+|-- requirements.txt
+|-- opttrans.py
+|-- opttrans_video.py
+|-- 使用指南.md
+|-- src/
+|   |-- __init__.py
+|   |-- crc16.py
+|   |-- layout_v2.py
+|   |-- encoder_pillow.py
+|   |-- decoder_pillow.py
+|   `-- video_transport.py
+|-- examples/
+`-- tests/
+```
+
+## 图片模式
+
+### 编码文件为码图
+
+命令格式：
+
+```powershell
+python .\opttrans.py encode <输入文件> <输出图片>
+```
+
+示例：
+
+```powershell
+python .\opttrans.py encode .\examples\input.bin .\examples\encoded.png
+```
+
+说明：
+
+- 如果输入文件大小 `<= 1384B`，会生成一张图片
+- 如果输入文件大小 `> 1384B`，会自动拆成多帧
+- 多帧输出时会生成类似 `encoded_frame0.png`、`encoded_frame1.png` 的文件
+
+### 解码码图为文件
+
+命令格式：
+
+```powershell
+python .\opttrans.py decode <输入图片> <输出文件>
+```
+
+示例：
+
+```powershell
+python .\opttrans.py decode .\examples\encoded.png .\examples\decoded.bin
+```
+
+说明：
+
+- 解码器会先尝试直接采样
+- 如果失败，会继续尝试透视矫正和候选定位点组合兜底
+- 当前版本会严格校验控制块和纠错结果，失败时直接报错，不再返回不可靠数据
+
+## 视频模式
+
+视频模式会把多张码图封装成一个视频，方便播放和录制。
+
+### 编码文件为视频
+
+命令格式：
+
+```powershell
+python .\opttrans_video.py encode <输入文件> <输出视频> [--fps N] [--marker-frames N] [--data-frames N]
+```
+
+示例：
+
+```powershell
+python .\opttrans_video.py encode .\examples\input.bin .\examples\demo.avi
+```
+
+可选参数：
+
+- `--fps`：视频帧率，默认 `6`
+- `--marker-frames`：开始和结束标记各重复多少帧，默认 `12`
+- `--data-frames`：每张数据码图重复多少帧，默认 `3`
+
+例如：
+
+```powershell
+python .\opttrans_video.py encode .\examples\input.bin .\examples\demo.avi --fps 6 --marker-frames 12 --data-frames 3
+```
+
+视频结构如下：
+
+1. 若干帧绿色 `START` 标记
+2. 一张或多张数据码图
+3. 若干帧红色 `END` 标记
+
+### 解码视频为文件
+
+命令格式：
+
+```powershell
+python .\opttrans_video.py decode <输入视频> <输出文件>
+```
+
+示例：
+
+```powershell
+python .\opttrans_video.py decode .\examples\demo.avi .\examples\demo_decoded.bin
+```
+
+解码时会打印类似下面的进度信息：
+
+```text
+Received frame 1/3 from video frame #12
+[###-------] 1/3 frames, missing: 1, 2
+Received frame 2/3 from video frame #15
+[######----] 2/3 frames, missing: 2
+Received frame 3/3 from video frame #18
+[##########] 3/3 frames, all received
+```
+
+## Python 调用示例
+
+### 图片编码
+
+```python
+from src.encoder_pillow import OptTransEncoderPillow
+
+encoder = OptTransEncoderPillow()
+encoder.encode_file("examples/input.bin", "examples/encoded.png")
+```
+
+### 图片解码
+
+```python
+from src.decoder_pillow import OptTransDecoderPillow
+
+decoder = OptTransDecoderPillow()
+data = decoder.decode_data("examples/encoded.png")
+
+with open("examples/decoded.bin", "wb") as f:
+    f.write(data)
+```
+
+### 视频编码
+
+```python
+from src.video_transport import OptTransVideoTransport
+
+transport = OptTransVideoTransport()
+transport.encode_file_to_video("examples/input.bin", "examples/demo.avi")
+```
+
+### 视频解码
+
+```python
+from src.video_transport import OptTransVideoTransport
+
+transport = OptTransVideoTransport()
+transport.decode_video_to_file("examples/demo.avi", "examples/demo_decoded.bin")
+```
+
+## 容量与编码规则
+
+`V2` 版式的主要规则如下：
+
+- 码图矩阵大小为 `128 x 128`
+- 单帧有效数据上限为 `1384B`
+- 编码版本号为 `2`
+- 使用 `8` 个 RS 数据块
+- 每块参数为：
+  - 数据 `173B`
+  - 纠错 `68B`
+  - 总计 `241B`
+
+这意味着每帧总编码容量为：
+
+```text
+8 x 241 = 1928B
+```
+
+其中包含数据、纠错和控制信息。
+
+## 使用建议
+
+- 拍照时尽量保证码图完整，不要裁掉四周留白
+- 尽量避免强反光、严重模糊和过大的透视角度
+- 如果是视频播放，建议每张数据帧至少重复 `2` 到 `3` 次
+- 如果是手机拍屏或录屏回传，建议保留 `START / END` 标记，不要裁剪视频头尾
+
+## 测试
+
+运行全部测试：
+
+```powershell
+python -m unittest discover -s .\tests -v
+```
+
+当前测试覆盖：
+
+- V2 图片 round-trip
+- 多帧控制信息
+- 控制块损坏与冲突
+- 轻度透视变换
+- `photo1` 到 `photo4` 示例照片解码
+- 视频 round-trip
+
+## 常见问题
+
+### 1. 提示缺少 `reedsolo` 或 `Pillow`
+
+重新安装依赖：
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### 2. 图片解码失败
+
+可以依次检查：
+
+- 图片是否完整包含整个码图
+- 图片是否太模糊
+- 是否有明显反光或阴影
+- 是否使用了旧版图片，而当前解码器只支持 `V2`
+
+### 3. 视频解码只收到部分帧
+
+建议尝试：
+
+- 增加 `--marker-frames`
+- 增加 `--data-frames`
+- 降低播放速度或提高录制清晰度
+- 确认视频开头和结尾的标记帧没有被裁掉
