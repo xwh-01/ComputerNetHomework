@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 from PIL import Image
 
 
@@ -199,22 +200,21 @@ class OptTransV2Layout:
         return matrix
 
     def render_matrix(self, matrix: list[list[int]]) -> Image.Image:
-        padded = [[0] * self.total_size for _ in range(self.total_size)]
-        for row in range(self.matrix_size):
-            for col in range(self.matrix_size):
-                padded[self.margin + row][self.margin + col] = matrix[row][col]
+        matrix_array = np.asarray(matrix, dtype=np.uint8)
+        padded = np.zeros((self.total_size, self.total_size), dtype=np.uint8)
+        padded[
+            self.margin:self.margin + self.matrix_size,
+            self.margin:self.margin + self.matrix_size,
+        ] = matrix_array
 
-        image = Image.new("RGB", (self.image_size, self.image_size), color="white")
-        pixels = image.load()
-        for row in range(self.total_size):
-            for col in range(self.total_size):
-                color = (0, 0, 0) if padded[row][col] else (255, 255, 255)
-                y0 = row * self.module_size
-                x0 = col * self.module_size
-                for y in range(y0, y0 + self.module_size):
-                    for x in range(x0, x0 + self.module_size):
-                        pixels[x, y] = color
-        return image
+        module_pixels = np.where(padded == 1, 0, 255).astype(np.uint8)
+        image_array = np.repeat(
+            np.repeat(module_pixels, self.module_size, axis=0),
+            self.module_size,
+            axis=1,
+        )
+        rgb = np.repeat(image_array[:, :, None], 3, axis=2)
+        return Image.fromarray(rgb, mode="RGB")
 
     def build_control_bytes(
         self,

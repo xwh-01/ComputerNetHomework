@@ -15,18 +15,18 @@ def build_parser() -> argparse.ArgumentParser:
     encode_parser = subparsers.add_parser("encode", help="Encode a file into a video")
     encode_parser.add_argument("input_file", help="Binary file to encode")
     encode_parser.add_argument("output_video", help="Output video path, e.g. output.mp4 or output.avi")
-    encode_parser.add_argument("--fps", type=int, default=6, help="Video FPS, default: 6")
+    encode_parser.add_argument("--fps", type=int, default=7, help="Video FPS for the phone-friendly profile, default: 7")
     encode_parser.add_argument(
         "--marker-frames",
         type=int,
-        default=12,
-        help="Number of repeated START/END marker frames, default: 12",
+        default=8,
+        help="Number of repeated START/END marker frames, default: 8",
     )
     encode_parser.add_argument(
         "--data-frames",
         type=int,
-        default=3,
-        help="Number of repeated video frames for each data frame, default: 3",
+        default=2,
+        help="Number of repeated video frames for each data frame, default: 2",
     )
 
     decode_parser = subparsers.add_parser("decode", help="Decode a video back into a file")

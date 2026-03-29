@@ -26,6 +26,7 @@ class OptTransEncoderPillow:
         self.block_size = self.layout.block_size
         self.total_data_area = self.layout.total_encoded_bytes
         self.rs = RSCodec(self.ecc_per_block)
+        self._base_matrix = self.layout.build_base_matrix()
 
     def _encode_data(self, data: bytes) -> bytearray:
         if len(data) > self.data_per_frame:
@@ -164,8 +165,14 @@ class OptTransEncoderPillow:
         penalty += int(abs(ratio - 0.5) * 100)
         return penalty
 
-    def encode_data(self, data: bytes, output_image, frame_num: int = 0, total_frames: int = 1):
-        matrix = self.layout.build_base_matrix()
+    def build_image(
+        self,
+        data: bytes,
+        frame_num: int = 0,
+        total_frames: int = 1,
+        mask_patterns: tuple[int, ...] | None = None,
+    ):
+        matrix = [row[:] for row in self._base_matrix]
 
         encoded_bytes = self._encode_data(data)
         data_bits = []
@@ -173,9 +180,26 @@ class OptTransEncoderPillow:
             data_bits.extend((byte >> (7 - bit)) & 1 for bit in range(8))
         self._place_data_bits(matrix, data_bits)
 
-        best_mask = 0
+        if mask_patterns is None:
+            mask_patterns = tuple(range(8))
+        if not mask_patterns:
+            raise ValueError("mask_patterns must contain at least one candidate")
+
+        if len(mask_patterns) == 1:
+            best_mask = mask_patterns[0]
+            final_control = self.layout.build_control_bytes(
+                data_len=len(data),
+                mask_pattern=best_mask,
+                frame_num=frame_num,
+                total_frames=total_frames,
+            )
+            self._write_control_area(matrix, final_control)
+            final_matrix = self._apply_mask(matrix, best_mask)
+            return self.layout.render_matrix(final_matrix)
+
+        best_mask = mask_patterns[0]
         best_penalty = float("inf")
-        for mask_pattern in range(8):
+        for mask_pattern in mask_patterns:
             control_bytes = self.layout.build_control_bytes(
                 data_len=len(data),
                 mask_pattern=mask_pattern,
@@ -198,12 +222,15 @@ class OptTransEncoderPillow:
         )
         self._write_control_area(matrix, final_control)
         final_matrix = self._apply_mask(matrix, best_mask)
+        return self.layout.render_matrix(final_matrix)
 
-        image = self.layout.render_matrix(final_matrix)
-        if hasattr(output_image, "write"):
-            image.save(output_image, format="PNG")
-        else:
-            image.save(output_image)
+    def encode_data(self, data: bytes, output_image=None, frame_num: int = 0, total_frames: int = 1):
+        image = self.build_image(data, frame_num=frame_num, total_frames=total_frames)
+        if output_image is not None:
+            if hasattr(output_image, "write"):
+                image.save(output_image, format="PNG")
+            else:
+                image.save(output_image)
         return image
 
     def encode_file(self, input_file, output_image):
@@ -222,5 +249,6 @@ class OptTransEncoderPillow:
             frame_output = output_path.with_name(
                 f"{output_path.stem}_frame{frame_num}{output_path.suffix}"
             )
-            self.encode_data(frame_data, str(frame_output), frame_num=frame_num, total_frames=total_frames)
+            image = self.build_image(frame_data, frame_num=frame_num, total_frames=total_frames)
+            image.save(frame_output)
         return total_frames
