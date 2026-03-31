@@ -1,8 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from src.video_transport import OptTransVideoTransport
+from src.video_transport import DecodedVideoFrame, OptTransVideoTransport
 
 
 class TestVideoTransport(unittest.TestCase):
@@ -56,6 +57,44 @@ class TestVideoTransport(unittest.TestCase):
 
         self.assertEqual(decoded_bytes, len(expected_output.read_bytes()))
         self.assertEqual(output_path.read_bytes(), expected_output.read_bytes())
+
+    def test_decode_video_falls_back_when_native_is_incomplete(self):
+        output_path = self.root / "merged.bin"
+        native_payload = b"hello"
+        fallback_payload = b"world"
+
+        native_received = {
+            0: DecodedVideoFrame(
+                frame_num=0,
+                total_frames=2,
+                data_len=len(native_payload),
+                data=native_payload,
+                source_index=10,
+            )
+        }
+        fallback_received = {
+            1: DecodedVideoFrame(
+                frame_num=1,
+                total_frames=2,
+                data_len=len(fallback_payload),
+                data=fallback_payload,
+                source_index=20,
+            )
+        }
+
+        with patch.object(
+            self.transport,
+            "_decode_video_native_mode",
+            return_value=(native_received, 2),
+        ), patch(
+            "src.video_transport.decode_camera_video_mode",
+            return_value=(fallback_received, 2),
+        ) as fallback_decode:
+            decoded_bytes = self.transport.decode_video_to_file("dummy.mp4", str(output_path))
+
+        self.assertEqual(decoded_bytes, len(native_payload) + len(fallback_payload))
+        self.assertEqual(output_path.read_bytes(), native_payload + fallback_payload)
+        fallback_decode.assert_called_once()
 
 
 if __name__ == "__main__":

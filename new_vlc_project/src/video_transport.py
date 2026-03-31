@@ -401,6 +401,49 @@ class OptTransVideoTransport:
         else:
             print(f"{bar} {completed}/{total_frames} frames, all received")
 
+    def _missing_frame_numbers(
+        self,
+        received_frames: dict[int, DecodedVideoFrame],
+        expected_total_frames: int | None,
+    ) -> list[int]:
+        if expected_total_frames is None:
+            return []
+        return [index for index in range(expected_total_frames) if index not in received_frames]
+
+    def _format_missing_frames(self, missing: list[int]) -> str:
+        preview = ", ".join(str(index) for index in missing[:8])
+        if len(missing) > 8:
+            preview += ", ..."
+        return preview
+
+    def _merge_decoded_results(
+        self,
+        primary_frames: dict[int, DecodedVideoFrame],
+        primary_total_frames: int | None,
+        secondary_frames: dict[int, DecodedVideoFrame],
+        secondary_total_frames: int | None,
+    ) -> tuple[dict[int, DecodedVideoFrame], int | None]:
+        expected_totals = {
+            total_frames
+            for total_frames in (primary_total_frames, secondary_total_frames)
+            if total_frames is not None
+        }
+        if len(expected_totals) > 1:
+            raise ValueError(
+                "Inconsistent total frame count between decode passes: "
+                + ", ".join(str(value) for value in sorted(expected_totals))
+            )
+
+        merged: dict[int, DecodedVideoFrame] = {
+            frame_num: self._clone_decoded_frame(frame, frame.source_index)
+            for frame_num, frame in primary_frames.items()
+        }
+        for frame_num, frame in secondary_frames.items():
+            merged.setdefault(frame_num, self._clone_decoded_frame(frame, frame.source_index))
+
+        expected_total_frames = next(iter(expected_totals)) if expected_totals else None
+        return merged, expected_total_frames
+
     def encode_file_to_video(
         self,
         input_file: str,
@@ -451,9 +494,9 @@ class OptTransVideoTransport:
         if expected_total_frames is None:
             raise ValueError("Unable to determine total frame count from the video")
 
-        missing = [index for index in range(expected_total_frames) if index not in received_frames]
+        missing = self._missing_frame_numbers(received_frames, expected_total_frames)
         if missing:
-            missing_text = ", ".join(str(index) for index in missing)
+            missing_text = self._format_missing_frames(missing)
             raise ValueError(f"Video decode incomplete, missing frame(s): {missing_text}")
 
         ordered_payload = bytearray()
@@ -563,10 +606,26 @@ class OptTransVideoTransport:
         return received_frames, expected_total_frames
 
     def decode_video_to_file(self, input_video: str, output_file: str) -> int:
+        native_received_frames: dict[int, DecodedVideoFrame] = {}
+        native_total_frames: int | None = None
+
         try:
-            received_frames, expected_total_frames = self._decode_video_native_mode(input_video)
+            native_received_frames, native_total_frames = self._decode_video_native_mode(input_video)
+            missing = self._missing_frame_numbers(native_received_frames, native_total_frames)
+            if not missing:
+                return self._finalize_decoded_output(native_received_frames, native_total_frames, output_file)
+            missing_text = self._format_missing_frames(missing)
+            native_error = ValueError(f"Native video decode incomplete, missing frame(s): {missing_text}")
         except Exception as native_error:
-            print(f"Native video decode failed: {native_error}. Trying camera-style fallback...")
-            received_frames, expected_total_frames = decode_camera_video_mode(self, input_video)
+            pass
+
+        print(f"Native video decode was incomplete or failed: {native_error}. Trying camera-style fallback...")
+        fallback_received_frames, fallback_total_frames = decode_camera_video_mode(self, input_video)
+        received_frames, expected_total_frames = self._merge_decoded_results(
+            native_received_frames,
+            native_total_frames,
+            fallback_received_frames,
+            fallback_total_frames,
+        )
 
         return self._finalize_decoded_output(received_frames, expected_total_frames, output_file)
