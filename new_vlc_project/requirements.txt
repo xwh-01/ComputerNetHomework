@@ -1,7 +1,0 @@
-# Core image encode/decode
-Pillow>=10.0.0
-reedsolo>=1.7.0
-
-# Matrix processing and video transport
-numpy>=1.24.0
-opencv-python>=4.8.0
